@@ -1,8 +1,8 @@
-# Webrova — Free Cloud Edition
+# Webrova
 
 An AI code builder for learning and portfolios: describe a small app, generate frontend/backend/database source, inspect and edit files, preview the frontend, and download the full project as a ZIP.
 
-## Deploy on Render Free
+## Deploy 
 
 Create a **Node Web Service** from this repository and the branch containing this README.
 
