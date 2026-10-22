@@ -1,48 +1,47 @@
-# Webrova
+# Webrova — Free Cloud Edition
 
-An AI app builder with a React workspace, Node API and LangGraph development pipeline.
+An AI code builder for learning and portfolios: describe a small app, generate frontend/backend/database source, inspect and edit files, preview the frontend, and download the full project as a ZIP.
 
-## Docker-free setup
+## Deploy on Render Free
 
-Use Node 22+ and Git. Run `npm ci`, copy `.env.example` to `.env`, and configure Gemini, E2B and a dedicated development database. Run `npm run build && npm start`, then open http://localhost:3000. For development, use `npm run dev`; `npm run cli` preserves the interactive CLI.
+Create a **Node Web Service** from this repository and the branch containing this README.
 
-Generated code executes only in E2B, never on the API host. The API stores source workspaces locally; production requires persistent disk. No Docker daemon, local Redis container, per-project database container, backend container or frontend container is created.
+- Compute plan: **Free** (do not select a paid plan).
+- Build command: `npm ci --omit=dev && npm run build`
+- Start command: `npm start`
+- Environment: `NODE_ENV=production`, `NODE_VERSION=22.16.0`, `GEMINI_MODEL=gemini-2.5-flash`.
+- Optional HTTP health check: `/api/health`.
+- No attached disk, database, Redis, E2B account or shared owner API key is needed.
+- Render assigns the public `onrender.com` subdomain and HTTPS.
 
-PostgreSQL projects receive an isolated schema and deterministic migration bootstrap. Mongo projects receive a unique database name. The database credentials are available to generated code: use a dedicated development database with a restricted role, not production data. PostgreSQL roles must be permitted to create schemas. Schema/database isolation here is organizational, not a security boundary between tenants sharing the same database role.
+Open Settings in the deployed app and enter **your own Gemini API key**. Use a free-tier Google API project if you want to stay within its free quota; a paid-tier key can incur Google charges. The key stays in page memory, is sent over HTTPS to this server and Google for generation, and is not saved to browser storage, filesystem or server logs. Refreshing clears it. The server intentionally ignores a shared `GEMINI_API_KEY`, so public visitors cannot consume an owner's key. Do not reuse previously committed keys.
 
-## Cost controls
+Try **Sample project** without a key. This opens a clearly labelled, deterministic sample task board; it makes no AI request and does not claim to be AI-generated in that session.
 
-- Choose an estimated AI budget before building, from $0.50 to $5 in the UI; the API accepts $0.05–$10.
-- Output allowance uses the remaining estimated budget. Configure model-specific input and output prices in `.env`.
-- Retries and thinking tokens are included in reported usage when metadata is returned. Failed transport requests may still incur provider charges that the API cannot observe.
-- Outputs are capped by task role. Transient/JSON retries are bounded; truncated generated code is rejected.
-- Upload changed source only and reinstall dependencies only when a package manifest changes within the same VM.
-- E2B VMs have a five-minute renewable timeout and are released when builds finish, fail or cancel. A build has a twenty-minute deadline. There is no always-on preview VM.
-- Only one build runs per instance. Excess starts return HTTP 429 rather than multiplying costs.
+## What works
 
-The budget is an estimate, not a billing guarantee. It excludes sandbox, hosting, database and network charges. Savings have not been benchmarked against the original implementation.
+- One bounded Gemini request per generation; no paid model fallback, automatic retries or thinking budget.
+- Frontend HTML/CSS/JS and exported Node/Express/SQLite backend code.
+- An isolated frontend iframe with an opaque origin and network-blocking CSP.
+- Editable source files, refreshable desktop/mobile preview, copy and ZIP export.
+- The current project is saved in your browser's session storage (API keys excluded). Download the ZIP to keep it permanently.
+- Request-size/file-size limits, path validation, at most two active generations per instance, per-IP pacing, timeout/cancellation, and redacted provider errors.
+- The API never executes generated server code, installs generated packages, or creates a database/VM.
 
-## Private deployment on Render
+## What free deployment does not provide
 
-`render.yaml` defines a native Node web service and persistent workspace disk. The blueprint includes a paid plan; review the hosting account's current pricing before creating it. Import the GitHub repository as a Blueprint and supply:
+The live **Webrova builder** is cloud-hosted. Its preview runs only frontend scripts using sample/in-memory data. Generated backend and database source is exported but is **not run or runtime-verified by Webrova**. It needs its own suitable runtime/database if you later deploy the generated app. Generated source still needs review and testing.
 
-- `ACCESS_PASSWORD`: a strong workspace access password.
-- `GEMINI_API_KEY` and `E2B_API_KEY`.
-- `SANDBOX_DATABASE_URL`: dedicated PostgreSQL or MongoDB development database, matching the generated app's database choice.
-- `REDIS_URL`: managed Redis with JSON and Search support (for example, compatible Redis Cloud). Plain Redis/Valkey without these modules is insufficient for the existing checkpointer.
+Render Free sleeps after inactivity and has cold starts, ephemeral filesystems and shared monthly workspace quotas. Data in server memory/files cannot survive restarts; this app therefore returns generated files directly to the browser rather than storing projects on the server. Browser session storage is not a cloud backup. Free hosting is limited, not unlimited; review Render usage settings and provider quotas. No keep-alive pings or paid resources are provisioned.
 
-Set `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` to the selected model's current rates. The app reads the platform's `PORT`. Frontend, API and authenticated WebSocket share one origin. Build command: `npm ci && npm run build`. Start command: `npm start`.
+The older LangGraph/isolated-runtime implementation remains in source for learning, with its dependencies moved to development-only dependencies. The default `npm start` and dashboard now use the free cloud mode. The archived advanced server is not required for this deployment.
 
-The deployment has not been provisioned by this change. Live verification requires the hosting account and runtime credentials. Repository `.env` files have been removed; rotate any live credentials previously committed because removal does not erase Git history.
+## Development and tests
 
-## Scope and scaling
+`npm ci` installs development dependencies for the offline test suite. `npm run build` installs/builds the React dashboard; `npm start` serves it and the API. Node 22+ is required.
 
-This is a private, single-tenant first deployment. Password sessions protect API and WebSocket access; project ownership and user accounts are not implemented. Keep `numInstances: 1`: active runs, human-input bridges and event replay are process-local, while source workspaces use an attached disk. Multiple replicas are not supported by this change.
+- `npm run test:free`: request validation, provider behavior, no paid fallback, preview CSP and file/path checks.
+- `npm run test:all:mock`: archived graph/pipeline and platform tests with mocked external calls.
+- `npm run build`: production frontend bundle.
 
-For concurrent users, the next architecture step is durable queued jobs, worker leases, user/project authorization, shared object storage for workspaces, per-project database credentials, and cross-instance event delivery. Add those before horizontal autoscaling. Removing Docker alone does not solve these requirements.
-
-The dashboard adds a Build Brief with scope presets, estimated budget selection, brief review/copy, and a generated file explorer. Generated project verification installs dependencies, applies PostgreSQL migrations and checks the frontend build/backend entry syntax inside E2B. It does not publish generated apps or prove that every endpoint works; inspect `DEPLOYMENT.md` in each generated project.
-
-## Verification
-
-`npm run test:platform` tests workspace containment, isolated command dispatch, dependency caching, cleanup/rollback, budget accounting, and authentication without making paid API calls. `npm run test:all:mock` also runs graph, blueprint and development-loop wiring checks. `npm run build` checks the production frontend bundle. GitHub Actions runs the offline checks on pushes and pull requests.
+Production deployments only need the three root runtime dependencies (Express, dotenv and Google GenAI); heavy LangGraph/E2B dependencies are excluded by `--omit=dev`. Frontend build tooling is installed only during the build.
