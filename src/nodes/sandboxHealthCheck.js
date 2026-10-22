@@ -1,5 +1,5 @@
 /**
- * sandboxHealthCheck.js — Verifies all containers are healthy
+ * sandboxHealthCheck.js — Verifies workspace and runtime configuration
  */
 
 import { healthCheck, getSandboxInfo } from "../utils/sandboxManager.js";
@@ -39,5 +39,5 @@ export async function sandboxHealthCheckNode(state) {
 
 export function sandboxHealthRouter(state) {
   if (state.sandboxHealthy) return "__end__";
-  return "__end__"; // For now, don't retry — show error and stop
+  throw new Error(state.error || "Sandbox health check failed");
 }

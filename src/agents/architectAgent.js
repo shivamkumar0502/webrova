@@ -72,7 +72,7 @@ export async function architectStep1Node(state) {
 
   if (!result.ok) {
     console.error(`   Architect step 1 failed: ${result.error}`);
-    return { error: `Architect step 1 failed: ${result.error}`, tokenUsage: emptyTokenDelta("architectStep1") };
+    return { error: `Architect step 1 failed: ${result.error}`, tokenUsage: makeTokenDelta("architectStep1", result.tokens) };
   }
 
   const entities = result.parsed.entities || result.parsed;
@@ -149,7 +149,7 @@ export async function architectStep2Node(state) {
 
   if (!result.ok) {
     console.error(`   Architect step 2 failed: ${result.error}`);
-    return { error: `Architect step 2 failed: ${result.error}`, tokenUsage: emptyTokenDelta("architectStep2") };
+    return { error: `Architect step 2 failed: ${result.error}`, tokenUsage: makeTokenDelta("architectStep2", result.tokens) };
   }
 
   const schema = result.parsed;
@@ -220,7 +220,7 @@ export async function architectStep3Node(state) {
 
   if (!result.ok) {
     console.error(`   Architect step 3 failed: ${result.error}`);
-    return { error: `Architect step 3 failed: ${result.error}`, tokenUsage: emptyTokenDelta("architectStep3") };
+    return { error: `Architect step 3 failed: ${result.error}`, tokenUsage: makeTokenDelta("architectStep3", result.tokens) };
   }
 
   const endpoints = result.parsed.apiEndpoints || result.parsed;
@@ -281,7 +281,7 @@ export async function architectStep4Node(state) {
 
   if (!result.ok) {
     console.error(`   Architect step 4 failed: ${result.error}`);
-    return { error: `Architect step 4 failed: ${result.error}`, tokenUsage: emptyTokenDelta("architectStep4") };
+    return { error: `Architect step 4 failed: ${result.error}`, tokenUsage: makeTokenDelta("architectStep4", result.tokens) };
   }
 
   const pages = result.parsed.frontendPages || result.parsed;
@@ -341,7 +341,7 @@ export async function architectStep5Node(state) {
 
   if (!result.ok) {
     console.error(`   Architect step 5 failed: ${result.error}`);
-    return { error: `Architect step 5 failed: ${result.error}`, tokenUsage: emptyTokenDelta("architectStep5") };
+    return { error: `Architect step 5 failed: ${result.error}`, tokenUsage: makeTokenDelta("architectStep5", result.tokens) };
   }
 
   const output = result.parsed;

@@ -17,7 +17,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import useProjectStore from "../store/projectStore";
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000";
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 

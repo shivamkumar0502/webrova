@@ -82,7 +82,7 @@ export async function patternExtractorNode(state) {
 
   if (!result.ok) {
     console.error(`   [patternExtractor] LLM failed: ${result.error}`);
-    return { error: `patternExtractor failed: ${result.error}`, tokenUsage: emptyTokenDelta("patternExtractor") };
+    return { error: `patternExtractor failed: ${result.error}`, tokenUsage: makeTokenDelta("patternExtractor", result.tokens) };
   }
 
   const patterns = result.parsed;

@@ -45,13 +45,13 @@ export function presentToUserNode(state) {
   if (state.sandboxId) {
     const sandboxPath = getSandboxPath(state.sandboxId);
     console.log(`  cd ${sandboxPath}`);
-    console.log("  docker-compose up");
+    console.log("  See DEPLOYMENT.md for backend and static frontend deployment");
     console.log("");
     console.log("  Then open:");
-    console.log("  🌐 Frontend: http://localhost:15173");
-    console.log("  🔌 Backend:  http://localhost:15000");
+    console.log("  🌐 Frontend: http://localhost:5173");
+    console.log("  🔌 Backend:  http://localhost:5000");
     console.log("");
-    console.log("  To stop: docker-compose down");
+    console.log("  To stop: stop the backend service");
   }
 
   console.log("═".repeat(60));

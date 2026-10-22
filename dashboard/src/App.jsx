@@ -13,11 +13,15 @@ import PipelineVisualizer from "./components/PipelineVisualizer";
 import LogStream from "./components/LogStream";
 import OutputPanel from "./components/OutputPanel";
 import HumanInputPanel from "./components/HumanInputPanel";
+import BuildBrief from "./components/BuildBrief";
+import WorkspaceFiles from "./components/WorkspaceFiles";
+import AccessGate from "./components/AccessGate";
 import TokenBudgetBar from "./components/TokenBudgetBar";
 
 export default function App() {
   const [requirementInput, setRequirementInput] = useState("");
   const [isStarting, setIsStarting] = useState(false);
+  const [budget, setBudget] = useState(1);
 
   const projectId = useProjectStore((s) => s.projectId);
   const requirement = useProjectStore((s) => s.requirement);
@@ -31,19 +35,20 @@ export default function App() {
 
   const { sendMessage, disconnect } = useWebSocket(projectId);
 
-  const handleStart = useCallback(async () => {
-    if (!requirementInput.trim()) return;
+  const handleStart = useCallback(async (brief) => {
+    if (!requirementInput.trim() || isStarting) return;
     setIsStarting(true);
     try {
-      const result = await createProject(requirementInput.trim());
+      const result = await createProject(typeof brief === "string" ? brief : requirementInput.trim(), budget);
       setProject(result.projectId, requirementInput.trim());
+      useProjectStore.setState({ tokenBudget: budget });
       setRequirementInput("");
     } catch (e) {
       alert(`Failed to start project: ${e.message}`);
     } finally {
       setIsStarting(false);
     }
-  }, [requirementInput, setProject]);
+  }, [requirementInput, setProject, budget, isStarting]);
 
   const handleHumanResponse = useCallback(
     (data) => {
@@ -73,7 +78,7 @@ export default function App() {
   }, [disconnect, reset]);
 
   return (
-    <div className="app">
+    <AccessGate><div className="app">
       <header className="header">
         <div className="header-left">
           <div className="logo">
@@ -107,50 +112,12 @@ export default function App() {
                   We build it.
                 </h1>
                 <p className="landing-desc">
-                  27 specialized agents — PM, Architect, Planner, Coder, 
-                  Reviewer, Executor, Debugger — working in concert. 
-                  From a single sentence to a deployed application.
+                  An AI team for your frontend, backend and database.
+                  Shape the brief, follow the build, and inspect every file.
                 </p>
               </div>
               <div className="landing-right">
-                <div className="input-block">
-                  <label className="input-label">PROJECT REQUIREMENT</label>
-                  <textarea
-                    value={requirementInput}
-                    onChange={(e) => setRequirementInput(e.target.value)}
-                    placeholder="Build a todo app with categories, due dates, and user authentication..."
-                    rows={5}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleStart();
-                    }}
-                  />
-                  <div className="input-actions">
-                    <button
-                      className="btn btn-accent"
-                      onClick={handleStart}
-                      disabled={!requirementInput.trim() || isStarting}
-                    >
-                      {isStarting ? "INITIALIZING..." : "LAUNCH"}
-                    </button>
-                    <span className="input-shortcut">Ctrl+Enter</span>
-                  </div>
-                </div>
-                <div className="templates">
-                  <span className="templates-label">TEMPLATES</span>
-                  {[
-                    "Blog platform with comments and tags",
-                    "E-commerce store with admin panel",
-                    "Real-time chat app with rooms",
-                  ].map((ex) => (
-                    <button
-                      key={ex}
-                      className="template-btn"
-                      onClick={() => setRequirementInput(ex)}
-                    >
-                      {ex}
-                    </button>
-                  ))}
-                </div>
+                <BuildBrief value={requirementInput} onChange={setRequirementInput} budget={budget} onBudgetChange={setBudget} busy={isStarting} onLaunch={handleStart} />
               </div>
             </div>
           </div>
@@ -211,10 +178,11 @@ export default function App() {
               />
             )}
 
+            <WorkspaceFiles projectId={projectId} status={status} />
             <TokenBudgetBar />
           </div>
         )}
       </main>
-    </div>
+    </div></AccessGate>
   );
 }

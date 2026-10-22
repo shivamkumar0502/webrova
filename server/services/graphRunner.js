@@ -24,6 +24,7 @@
  */
 
 import { buildGraph, createCheckpointer } from "../../src/config/graph.js";
+import { releaseSandbox } from "../../src/utils/sandboxManager.js";
 import { initGemini } from "../../src/utils/gemini.js";
 
 /**
@@ -31,6 +32,12 @@ import { initGemini } from "../../src/utils/gemini.js";
  * Each entry holds the abort controller, input bridge, and metadata
  */
 const activeRuns = new Map();
+let starting = false;
+async function reserveStart(fn) {
+  if (starting || activeRuns.size) throw Object.assign(new Error("A build is already active. Finish or cancel it first."), { status: 429 });
+  starting = true;
+  try { return await fn(); } finally { starting = false; }
+}
 
 /**
  * InputBridge — The mechanism for human-in-the-loop over WebSocket
@@ -121,7 +128,8 @@ export const inputBridges = new Map();
  * @param {object} options - { tokenBudget, resumeThreadId }
  * @returns {object} - { projectId, threadId }
  */
-export async function startProject(projectId, requirement, emit, options = {}) {
+export async function startProject(...args) { return reserveStart(() => _startProject(...args)); }
+async function _startProject(projectId, requirement, emit, options = {}) {
   const { tokenBudget = 2.0 } = options;
 
   // 1. Initialize Gemini if not already
@@ -181,10 +189,13 @@ export async function startProject(projectId, requirement, emit, options = {}) {
 /**
  * Resume an existing project
  */
-export async function resumeProject(projectId, emit) {
+export async function resumeProject(...args) { return reserveStart(() => _resumeProject(...args)); }
+async function _resumeProject(projectId, emit) {
   const checkpointer = await createCheckpointer();
   const graph = buildGraph({ checkpointer });
 
+  const saved = await graph.getState({ configurable: { thread_id: projectId } });
+  if (!saved?.values?.userRequirement) throw Object.assign(new Error("Project checkpoint not found"), { status: 404 });
   const inputBridge = new InputBridge();
   inputBridge.setEmitFn(emit);
   inputBridges.set(projectId, inputBridge);
@@ -231,21 +242,29 @@ async function _executeGraph(projectId, graph, config, requirement, tokenBudget,
     timestamp: Date.now(),
   });
 
+  const initial = requirement ? null : (await graph.getState(config))?.values;
+  let usage = initial?.tokenUsage || { calls: [], totalInput: 0, totalOutput: 0, estimatedCost: 0 };
   const input = requirement
     ? { userRequirement: requirement, tokenBudget: tokenBudget || 2.0 }
     : null; // null for resume
 
+  const deadline = setTimeout(() => cancelProject(projectId), 20 * 60 * 1000);
+  deadline.unref();
   try {
+    // Pass the signal through the graph; cancellation also releases pending human input.
+    const signal = activeRuns.get(projectId)?.abortController.signal;
     // stream() yields node-by-node updates
     const stream = await graph.stream(input, {
       ...config,
       streamMode: "updates",
+      signal,
     });
 
     for await (const event of stream) {
       // event shape: { nodeName: { ...partial state updates } }
       const nodeName = Object.keys(event)[0];
       const nodeOutput = event[nodeName];
+      if (nodeOutput?.error) throw new Error(nodeOutput.error);
 
       // Check abort
       if (activeRuns.get(projectId)?.abortController?.signal?.aborted) {
@@ -262,7 +281,11 @@ async function _executeGraph(projectId, graph, config, requirement, tokenBudget,
       });
 
       // Special handling: extract interesting state for the dashboard
-      _emitDerivedEvents(nodeName, nodeOutput, emit);
+      if (nodeOutput.tokenUsage) {
+        const delta = nodeOutput.tokenUsage;
+        usage = { calls: [...usage.calls, ...(delta.newCalls || [])], totalInput: usage.totalInput + (delta.addedInput || 0), totalOutput: usage.totalOutput + (delta.addedOutput || 0), estimatedCost: usage.estimatedCost + (delta.addedCost || 0) };
+      }
+      _emitDerivedEvents(nodeName, nodeOutput.tokenUsage ? { ...nodeOutput, tokenUsage: usage } : nodeOutput, emit);
     }
 
     // Stream finished — get final state
@@ -276,7 +299,7 @@ async function _executeGraph(projectId, graph, config, requirement, tokenBudget,
     });
 
   } catch (error) {
-    if (error.name === "AbortError") {
+    if (error.name === "AbortError" || activeRuns.get(projectId)?.abortController.signal.aborted) {
       emit({ type: "run_cancelled", projectId, timestamp: Date.now() });
     } else {
       // Emit a detailed error so the dashboard can show what happened
@@ -304,6 +327,12 @@ async function _executeGraph(projectId, graph, config, requirement, tokenBudget,
         // Can't get state — that's fine
       }
     }
+  } finally {
+    clearTimeout(deadline);
+    try {
+      const saved = await graph.getState(config);
+      if (saved?.values?.sandboxId) await releaseSandbox(saved.values.sandboxId);
+    } catch (error) { console.error("Sandbox cleanup failed:", error.message); }
   }
 }
 
@@ -478,6 +507,7 @@ export function cancelProject(projectId) {
   const run = activeRuns.get(projectId);
   if (run) {
     run.abortController.abort();
+    run.inputBridge.provideInput({ cancelled: true });
     run.status = "cancelled";
     return true;
   }

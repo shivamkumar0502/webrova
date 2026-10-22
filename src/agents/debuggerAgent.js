@@ -53,7 +53,7 @@ export async function debuggerAgentNode(state) {
     
     if (doneTasks.length > 0) {
       const lastGoodTag = `v0.${doneTasks.length}.0`;
-      const rbResult = rollback(sandboxId, lastGoodTag);
+      const rbResult = await rollback(sandboxId, lastGoodTag);
       
       if (rbResult.success) {
         console.log(`   ✅ Rolled back to ${lastGoodTag}. Retrying task from scratch.`);
@@ -125,7 +125,7 @@ export async function debuggerAgentNode(state) {
 
   if (!result.ok) {
     console.error(`   [debuggerAgent] LLM failed: ${result.error}`);
-    return { error: `debuggerAgent failed: ${result.error}`, tokenUsage: emptyTokenDelta("debuggerAgent") };
+    return { error: `debuggerAgent failed: ${result.error}`, tokenUsage: makeTokenDelta("debuggerAgent", result.tokens) };
   }
 
   const debug = result.parsed;

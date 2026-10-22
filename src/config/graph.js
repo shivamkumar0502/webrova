@@ -211,31 +211,15 @@ export function buildGraph(options = {}) {
   return compiled;
 }
 
-export async function createCheckpointer() {
-  const redisUrl = process.env.REDIS_URL;
-
-  if (redisUrl) {
-    // Auto-start Redis container if not running
-    const { ensureRedis } = await import("../utils/redisDocker.js");
-    const redisReady = ensureRedis(redisUrl);
-
-    if (redisReady) {
-      try {
-        const { RedisSaver } = await import("@langchain/langgraph-checkpoint-redis");
-        const saver = await RedisSaver.fromUrl(redisUrl);
-        console.log("✅ Redis checkpointer connected");
-        return saver;
-      } catch (error) {
-        console.warn(`⚠️ Redis connection failed: ${error.message}`);
-        console.warn("   Falling back to in-memory checkpointer");
-      }
-    } else {
-      console.warn("⚠️ Redis not available. Using in-memory checkpointer.");
+let checkpointerPromise;
+export function createCheckpointer() {
+  if (!checkpointerPromise) checkpointerPromise = (async () => {
+    if (process.env.REDIS_URL) {
+      const { RedisSaver } = await import("@langchain/langgraph-checkpoint-redis");
+      return RedisSaver.fromUrl(process.env.REDIS_URL);
     }
-  } else {
-    console.log("ℹ️  No REDIS_URL in .env. Using in-memory checkpointer.");
-    console.log("   Add REDIS_URL=redis://localhost:6379 to .env for persistence.");
-  }
-
-  return new MemorySaver();
+    if (process.env.NODE_ENV === "production") throw new Error("REDIS_URL is required in production");
+    return new MemorySaver();
+  })().catch(error => { checkpointerPromise = null; throw error; });
+  return checkpointerPromise;
 }

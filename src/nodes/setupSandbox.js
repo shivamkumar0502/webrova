@@ -1,13 +1,4 @@
-/**
- * setupSandbox.js — Creates complete Docker environment
- * 
- * Passes the Architect's dbSchema to sandboxManager so that:
- * - Database container starts with correct image
- * - Tables are created from the schema
- * - Backend has DATABASE_URL set
- * - Frontend has VITE_API_URL set
- */
-
+/** Create a Docker-free workspace with isolated on-demand execution. */
 import { createSandbox } from "../utils/sandboxManager.js";
 
 /**

@@ -100,7 +100,7 @@ export async function reviewerAgentNode(state) {
 
   if (!result.ok) {
     console.error(`   [reviewerAgent] LLM failed: ${result.error}`);
-    return { error: `reviewerAgent failed: ${result.error}`, tokenUsage: emptyTokenDelta("reviewerAgent") };
+    return { error: `reviewerAgent failed: ${result.error}`, tokenUsage: makeTokenDelta("reviewerAgent", result.tokens) };
   }
 
   const review = result.parsed;

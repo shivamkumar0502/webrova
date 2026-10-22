@@ -95,7 +95,7 @@ export async function pmAgentNode(state) {
 
   if (!result.ok) {
     console.error(`   [pmAgent] LLM failed: ${result.error}`);
-    return { error: `pmAgent failed: ${result.error}`, tokenUsage: emptyTokenDelta("pmAgent") };
+    return { error: `pmAgent failed: ${result.error}`, tokenUsage: makeTokenDelta("pmAgent", result.tokens) };
   }
 
   const response = result.parsed;

@@ -21,6 +21,9 @@
 
 import "dotenv/config";
 import express from "express";
+import path from "node:path";
+import fs from "node:fs";
+import { accessGate, login, authorized } from "./auth.js";
 import cors from "cors";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
@@ -29,12 +32,14 @@ import { initGemini } from "../src/utils/gemini.js";
 import projectRoutes from "./routes/projects.js";
 import { initWebSocket } from "./ws/handler.js";
 
-const PORT = process.env.SERVER_PORT || 3000;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // ─── Express App ─────────────────────────────────────────────
 
 const app = express();
+app.disable("x-powered-by");
+if (process.env.NODE_ENV === "production" && (!process.env.ACCESS_PASSWORD || !process.env.REDIS_URL)) throw new Error("Production requires ACCESS_PASSWORD and REDIS_URL");
 
 // Middleware
 app.use(cors({ origin: FRONTEND_URL, credentials: true }));
@@ -59,7 +64,18 @@ app.get("/api/health", (req, res) => {
 });
 
 // Project routes
-app.use("/api/projects", projectRoutes);
+// Single same-origin deployment keeps authentication and WebSockets on one origin.
+app.post("/api/login", login);
+app.get("/api/session", (req, res) => res.json({ authenticated: authorized(req) }));
+app.use("/api/projects", accessGate, projectRoutes);
+const dashboardDist = path.resolve("dashboard/dist");
+if (fs.existsSync(dashboardDist)) {
+  app.use(express.static(dashboardDist));
+  app.get("*", (req, res) => {
+    if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+    res.sendFile(path.join(dashboardDist, "index.html"));
+  });
+}
 
 // ─── HTTP + WebSocket Server ─────────────────────────────────
 
@@ -69,6 +85,8 @@ const server = createServer(app);
 const wss = new WebSocketServer({
   server,
   path: "/ws",
+  maxPayload: 65536,
+  verifyClient: ({ req }) => authorized(req),
 });
 
 initWebSocket(wss);
@@ -105,6 +123,10 @@ async function start() {
   });
 }
 
+process.on("SIGTERM", () => {
+  server.close(); wss.close();
+  setTimeout(() => process.exit(0), 10000).unref();
+});
 start().catch((error) => {
   console.error("   ❌ Server failed to start:", error);
   process.exit(1);
