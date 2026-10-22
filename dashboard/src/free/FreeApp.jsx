@@ -4,11 +4,21 @@ import { normalizeApiKey, hasApiKeyFormat } from '../../../shared/apiKey.js';
 import { demoProject } from './demoProject';
 import { previewDocument } from './preview';
 import './free.css';
+import { restoreWorkspace, saveWorkspace } from './projectHistory';
 
 const examples = [ ['Task board', 'Build a task board with categories, due dates, and complete/delete actions.'], ['Client portal', 'Build a small client project tracker with project status, notes, and a dashboard.'], ['Habit tracker', 'Build a habit tracker with daily check-ins, streaks, and a weekly overview.'] ];
-function restore() { try { const data = JSON.parse(sessionStorage.getItem('webrova-project') || 'null'); return Array.isArray(data?.files) ? data : null; } catch { return null; } }
 export default function FreeApp() {
-  const [project, setProject] = useState(restore);
+  const [workspace, setWorkspace] = useState(() => {
+    try { return restoreWorkspace(localStorage, sessionStorage); } catch { return { projects: [], activeId: null }; }
+  });
+  const project = workspace.projects.find(p => p.id === workspace.activeId) || null;
+  function setProject(value) {
+    setWorkspace(previous => {
+      const current = previous.projects.find(p => p.id === previous.activeId);
+      const next = typeof value === 'function' ? value(current) : { ...value, id: crypto.randomUUID() };
+      return { projects: current && typeof value === 'function' ? previous.projects.map(p => p.id === current.id ? next : p) : [next, ...previous.projects], activeId: next.id };
+    });
+  }
   const [prompt, setPrompt] = useState('');
   const [key, setKey] = useState('');
   const [settings, setSettings] = useState(false);
@@ -23,7 +33,10 @@ export default function FreeApp() {
   const frame = useRef(null);
   const [frameRevision, setFrameRevision] = useState(0);
   const [copyStatus, setCopyStatus] = useState('');
-  useEffect(() => { if (project) { try { sessionStorage.setItem('webrova-project', JSON.stringify(project)); } catch { setNotice('Session storage is full. Download the ZIP to keep your files.'); } } }, [project]);
+  useEffect(() => {
+    try { saveWorkspace(localStorage, workspace); sessionStorage.removeItem('webrova-project'); }
+    catch { setNotice('Browser storage is full or unavailable. Download your projects as ZIP files to keep them.'); }
+  }, [workspace]);
   useEffect(() => { if (!busy) return; const started = Date.now(); const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000); return () => clearInterval(timer); }, [busy]);
   useEffect(() => () => abort.current?.abort(), []);
   const currentFile = project?.files.find(f => f.path === selected);
@@ -46,9 +59,9 @@ export default function FreeApp() {
     const zip = new JSZip(); for (const file of project.files) zip.file(file.path, file.content);
     const blob = await zip.generateAsync({ type: 'blob' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'webrova-project.zip'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  function newProject() { if (busy) return; setProject(null); setPrompt(''); setNotice(''); setError(''); try { sessionStorage.removeItem('webrova-project'); } catch {} }
+  function newProject() { if (busy) return; setWorkspace(w => ({ ...w, activeId: null })); setPrompt(''); setNotice('Your previous projects are saved in this browser. Open one from the sidebar.'); setError(''); }
   return <div className="free-app">
-    <aside className="free-sidebar"><a className="free-brand" href="/" aria-label="Webrova home"><span>W</span>webrova<i>beta</i></a><button className="free-new" onClick={newProject} disabled={busy}>＋ New project <kbd>⌘</kbd></button><p className="side-label">WORKSPACE</p><button className={'side-link ' + (project ? 'active' : '')} onClick={() => project && setView('preview')}>▧ {project?.title || 'Your next idea'}</button><p className="side-label side-gap">START SOMETHING</p>{examples.map(([name, text]) => <button className="side-link" key={name} onClick={() => setPrompt(text)}>{name}<span>↗</span></button>)}<div className="side-bottom"><span className="free-plan">FREE CLOUD EDITION</span><p>No paid sandbox.<br/>No hosting plan upgrade.</p><button className="side-link" onClick={() => setSettings(!settings)}>⚙ API settings <span>{key ? '●' : '○'}</span></button><a href="https://github.com/shivamkumar0502/webrova" target="_blank" rel="noreferrer">View source ↗</a></div></aside>
+    <aside className="free-sidebar"><a className="free-brand" href="/" aria-label="Webrova home"><span>W</span>webrova<i>beta</i></a><button className="free-new" onClick={newProject} disabled={busy}>＋ New project <kbd>⌘</kbd></button><p className="side-label">WORKSPACE</p><p className="history-hint">Saved on this browser · ZIP for backup</p>{workspace.projects.map(saved => <button className={'side-link ' + (saved.id === project?.id ? 'active' : '')} key={saved.id} disabled={busy} onClick={() => { setWorkspace(w => ({ ...w, activeId: saved.id })); setSelected('frontend/index.html'); setView('preview'); setPrompt(''); setError(''); setNotice(''); setFrameRevision(n => n + 1); }}>▧ {saved.title || 'Untitled project'}</button>)}<p className="side-label side-gap">START SOMETHING</p>{examples.map(([name, text]) => <button className="side-link" key={name} onClick={() => setPrompt(text)}>{name}<span>↗</span></button>)}<div className="side-bottom"><span className="free-plan">FREE CLOUD EDITION</span><p>No paid sandbox.<br/>No hosting plan upgrade.</p><button className="side-link" onClick={() => setSettings(!settings)}>⚙ API settings <span>{key ? '●' : '○'}</span></button><a href="https://github.com/shivamkumar0502/webrova" target="_blank" rel="noreferrer">View source ↗</a></div></aside>
     <div className="free-main"><header className="free-header"><div><span className="header-dot"/> {project ? project.title : 'Personal workspace'}<span className="free-header-tag">Learning & portfolio</span></div><button onClick={loadDemo} disabled={busy} className="free-btn ghost">Try sample project ↗</button></header>
       {settings && <section className="free-settings"><div><h2>Bring your Gemini key</h2><p>Use a free-tier API project; a paid-tier key can incur Google charges. The key stays in page memory and is sent over HTTPS to this service and Google only for your generation request. It is never saved to browser storage or server logs.</p><a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Get an API key in Google AI Studio ↗</a></div><label>Gemini API key<input type="password" autoComplete="off" value={key} placeholder="AIza…" onChange={e => { setKey(e.target.value); setError(''); setNotice(''); }}/></label><button className="free-btn ghost" onClick={() => { setKey(''); setNotice('API key cleared from this page.'); }}>Clear key</button><button className="free-btn" onClick={() => { const cleaned = normalizeApiKey(key); if (cleaned && !hasApiKeyFormat(cleaned)) { setError('Paste only the API key from Google AI Studio.'); return; } setKey(cleaned); setError(''); setNotice(cleaned ? 'Key added for this page session. Click Build my idea to generate; Google will validate the key.' : 'No key added. You can still try the sample project.'); setSettings(false); }}>Done</button></section>}
       {!project && <section className="free-hero"><span className="free-eyebrow">FROM A SMALL IDEA TO REAL CODE</span><h1>What will you<br/><em>build today?</em></h1><p>Describe an app. Generate the frontend, backend and database code.<br/>Preview the interface, make it yours, and take every file with you.</p><div className="hero-pills"><span>↗ Frontend preview</span><span>⌘ Editable source</span><span>↓ ZIP export</span></div></section>}
