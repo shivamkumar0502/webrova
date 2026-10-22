@@ -45,7 +45,7 @@ export async function simplifyTaskNode(state) {
 
   if (!result.ok) {
     console.error(`   [simplifyTask] LLM failed: ${result.error}`);
-    return { error: `simplifyTask failed: ${result.error}`, tokenUsage: emptyTokenDelta("simplifyTask") };
+    return { error: `simplifyTask failed: ${result.error}`, tokenUsage: makeTokenDelta("simplifyTask", result.tokens) };
   }
 
   const output = result.parsed;

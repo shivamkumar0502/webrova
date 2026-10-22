@@ -27,6 +27,11 @@ import { provideHumanInput, cancelProject, getRunStatus } from "../services/grap
  * Multiple clients can observe the same project run
  */
 const projectClients = new Map();
+const history = new Map();
+const expiry = setInterval(() => {
+  for (const [id, record] of history) if (Date.now() - record.at > 3600000 && !getRunStatus(id)) history.delete(id);
+}, 60000);
+expiry.unref();
 
 /**
  * Initialize WebSocket handling on the HTTP server
@@ -54,6 +59,8 @@ export function initWebSocket(wss) {
 
     console.log(`   🔌 WS connected: project=${projectId} (${projectClients.get(projectId).size} clients)`);
 
+    // A build starts before the browser connects. Replay its bounded event history.
+    for (const event of history.get(projectId)?.events || []) ws.send(JSON.stringify(event));
     // Send current status if run is active
     const status = getRunStatus(projectId);
     if (status) {
@@ -135,6 +142,15 @@ function handleClientMessage(projectId, msg, ws) {
  * @param {object} event - The event to broadcast
  */
 export function broadcastToProject(projectId, event) {
+  const safeEvent = JSON.parse(JSON.stringify(event, (key, value) => typeof value === 'string' && value.length > 12000 ? value.slice(0, 12000) + '…' : value));
+  const record = history.get(projectId) || { events: [], at: Date.now(), sequence: 0 };
+  record.sequence++;
+  safeEvent.eventId = `${projectId}:${record.sequence}`;
+  record.at = Date.now(); record.events.push(safeEvent);
+  if (record.events.length > 200) record.events.shift();
+  history.set(projectId, record);
+  if (history.size > 100) history.delete(history.keys().next().value);
+  event = safeEvent;
   const clients = projectClients.get(projectId);
   if (!clients || clients.size === 0) return;
 

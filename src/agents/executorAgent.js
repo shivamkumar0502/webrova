@@ -12,9 +12,9 @@
  * No runtime needed. No Docker needed for most checks. Catches 80% of wiring bugs.
  */
 
-import { readFile, getFileList, executeCommand, getSandboxInfo } from "../utils/sandboxManager.js";
+import { readFile, getFileList, executeCommand, getSandboxInfo, installDependencies } from "../utils/sandboxManager.js";
 
-export function executorAgentNode(state) {
+export async function executorAgentNode(state) {
   console.log("\n[Executor] Testing code...\n");
 
   const { currentTask, coderOutput, sandboxId, fileRegistry } = state;
@@ -24,7 +24,7 @@ export function executorAgentNode(state) {
   }
 
   const info = getSandboxInfo(sandboxId);
-  const isDocker = info?.dockerEnabled || false;
+  const hasRuntime = info?.isolatedExecution || false;
   const errors = [];
   const outputs = [];
   const files = coderOutput?.files || [];
@@ -58,15 +58,13 @@ export function executorAgentNode(state) {
     }
 
     // .js syntax check via Docker or local
-    if (isDocker) {
+    if (hasRuntime) {
       const container = file.path.includes("frontend") ? "frontend" : "backend";
-      const result = executeCommand(sandboxId, `cd /app/${container} && node --check /app/${file.path}`, 10000);
+      const result = await executeCommand(sandboxId, `cd /app/${container} && node --check /app/${file.path}`, 10000);
       if (result.exitCode === 0) {
         outputs.push(`+ ${file.path} syntax valid`);
-      } else if (result.stderr?.includes("SyntaxError")) {
-        errors.push(`Syntax error in ${file.path}: ${result.stderr.slice(0, 300)}`);
       } else {
-        outputs.push(`~ ${file.path} unresolved imports (will resolve after npm install)`);
+        errors.push(`Syntax error in ${file.path}: ${result.stderr.slice(0, 300)}`);
       }
     }
   }
@@ -148,17 +146,17 @@ export function executorAgentNode(state) {
 
   // ─── npm install if Docker available ──────────────────
 
-  if (isDocker && errors.length === 0) {
+  if (hasRuntime && errors.length === 0) {
     const hasBackendFiles = files.some(f => f.path?.includes("backend"));
     const hasFrontendFiles = files.some(f => f.path?.includes("frontend"));
 
     if (hasBackendFiles) {
-      const result = executeCommand(sandboxId, "cd /app/backend && npm install 2>&1", 60000);
-      outputs.push(result.exitCode === 0 ? "+ Backend npm install ok" : `~ Backend npm: ${result.stderr.slice(0, 100)}`);
+      const result = await installDependencies(sandboxId, "backend");
+      if (result.exitCode) errors.push("Backend install failed: " + result.stderr); else outputs.push("Backend dependencies ready");
     }
     if (hasFrontendFiles) {
-      const result = executeCommand(sandboxId, "cd /app/frontend && npm install 2>&1", 60000);
-      outputs.push(result.exitCode === 0 ? "+ Frontend npm install ok" : `~ Frontend npm: ${result.stderr.slice(0, 100)}`);
+      const result = await installDependencies(sandboxId, "frontend");
+      if (result.exitCode) errors.push("Frontend install failed: " + result.stderr); else outputs.push("Frontend dependencies ready");
     }
   }
 

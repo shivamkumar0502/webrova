@@ -1,8 +1,8 @@
 /**
  * plannerAgent.js — Planner Agent
  * 
- * Now includes Phase 6: deployment (Dockerfiles + docker-compose)
- * so the generated project can run with: docker-compose up
+ * Now includes Phase 6: deployment (native Node deployment)
+ * so the generated project can run with: npm start
  */
 
 import { safeCallGemini, callGemini, makeTokenDelta, emptyTokenDelta } from "../utils/gemini.js";
@@ -20,7 +20,7 @@ MANDATORY PHASE ORDER:
 4. "backend" — API routes (one task per resource/entity)
 5. "frontend" — React pages + components (one task per page)
 6. "integration" — Wire frontend to backend, App.jsx routing, main entry points
-7. "deployment" — Dockerfiles for backend + frontend, docker-compose.yml, final README
+7. "deployment" — native Node backend start scripts, frontend static build, environment examples, database migrations, final README
 
 OUTPUT FORMAT (strict JSON):
 {
@@ -73,7 +73,7 @@ So your Phase 1 (setup) should ONLY create files that are project-SPECIFIC:
 
 Phase 6 (integration): Do NOT create backend/src/index.js or frontend/src/App.jsx — they are AUTO-ASSEMBLED from the route and page files you create in earlier phases. If you need an integration task, use it for wiring specific features (e.g. a shared layout component, or connecting auth flow).
 
-Phase 7 (deployment): Include ONLY a README.md task. Docker files are auto-generated.
+Phase 7 (deployment): Include ONLY a README.md task. Native deployment instructions are auto-generated; include migrations and environment setup.
 
 - File paths should NOT start with / (use relative: "backend/src/..." not "/backend/src/...")
 - Backend models MUST use the file name format from the entity map: e.g., if entity.modelFile = "todoItem", the file is "backend/src/models/todoItem.js"
@@ -125,7 +125,7 @@ export async function plannerAgentNode(state) {
 
   if (!result.ok) {
     console.error(`   [plannerAgent] LLM failed: ${result.error}`);
-    return { error: `plannerAgent failed: ${result.error}`, tokenUsage: emptyTokenDelta("plannerAgent") };
+    return { error: `plannerAgent failed: ${result.error}`, tokenUsage: makeTokenDelta("plannerAgent", result.tokens) };
   }
 
   const plan = result.parsed;

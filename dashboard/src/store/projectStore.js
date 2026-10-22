@@ -179,6 +179,7 @@ const useProjectStore = create((set, get) => ({
    * Routes events to the appropriate state updates.
    */
   processEvent: (event) => {
+    if (event.eventId && get().events.some(previous => previous.eventId === event.eventId)) return;
     const { addEvent } = get();
 
     // Add to log

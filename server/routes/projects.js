@@ -14,6 +14,7 @@
  * then connects to ws://server/ws?projectId=xxx to watch it.
  */
 
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import {
   startProject,
@@ -38,13 +39,17 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "requirement is required" });
     }
 
-    const projectId = `project-${Date.now()}`;
+    if (requirement.length > 20000) return res.status(400).json({ error: "Requirement too long" });
+    const budget = tokenBudget ?? 2;
+    if (typeof budget !== "number" || !Number.isFinite(budget) || budget < 0.05 || budget > 10) return res.status(400).json({ error: "Budget must be between $0.05 and $10" });
+    if (!process.env.GEMINI_API_KEY || !process.env.E2B_API_KEY || !process.env.SANDBOX_DATABASE_URL) return res.status(503).json({ error: "Configure Gemini, E2B and a dedicated sandbox database before starting" });
+    const projectId = `project-${randomUUID()}`;
 
     // Create an emit function that broadcasts to WebSocket clients
     const emit = (event) => broadcastToProject(projectId, event);
 
     const result = await startProject(projectId, requirement.trim(), emit, {
-      tokenBudget: tokenBudget || 2.0,
+      tokenBudget: budget,
     });
 
     res.status(201).json({
@@ -56,7 +61,7 @@ router.post("/", async (req, res) => {
     });
   } catch (error) {
     console.error("Error starting project:", error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -96,7 +101,7 @@ router.get("/:id", async (req, res) => {
       state: state ? _summarizeState(state) : null,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -120,7 +125,7 @@ router.post("/:id/resume", async (req, res) => {
       wsUrl: `/ws?projectId=${result.projectId}`,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -162,10 +167,10 @@ router.get("/:id/sandbox", async (req, res) => {
       sandboxId,
       info,
       fileCount: files.length,
-      files: files.slice(0, 100), // Limit to 100 files in response
+      files: files.filter(file => !file.split("/").some(part => part.startsWith("."))).slice(0, 100), // Limit to 100 files in response
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -187,6 +192,7 @@ router.get("/:id/files/*", async (req, res) => {
       return res.status(404).json({ error: "No sandbox" });
     }
 
+    if (filePath.split('/').some(part => part.startsWith('.')) || /(?:private|secret|credential)/i.test(filePath)) return res.status(403).json({ error: "Private file" });
     const content = readFile(sandboxId, filePath);
     if (content === null) {
       return res.status(404).json({ error: "File not found" });
@@ -194,7 +200,7 @@ router.get("/:id/files/*", async (req, res) => {
 
     res.json({ path: filePath, content });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 

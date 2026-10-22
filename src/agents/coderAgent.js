@@ -208,10 +208,14 @@ export async function coderAgentNode(state) {
       systemPrompt,
       userPrompt: filePrompt,
       agentName: "coderAgent",
-      currentCost: state.tokenUsage?.estimatedCost + totalTokens.cost || 0,
+      currentCost: (state.tokenUsage?.estimatedCost || 0) + totalTokens.cost,
       tokenBudget: state.tokenBudget,
     });
 
+    // Count every paid response, including failed parses and empty content.
+    totalTokens.input += result.tokens.input;
+    totalTokens.output += result.tokens.output;
+    totalTokens.cost += result.tokens.cost;
     if (!result.ok) {
       console.error(`   FAILED: ${filePath} — ${result.error}`);
       allWrittenFiles.push({ path: filePath, lines: 0, error: result.error });
@@ -256,10 +260,6 @@ export async function coderAgentNode(state) {
       allWrittenFiles.push({ path: writePath, lines: 0, error: err.message });
     }
 
-    // Accumulate tokens
-    totalTokens.input += result.tokens.input;
-    totalTokens.output += result.tokens.output;
-    totalTokens.cost += result.tokens.cost;
   }
 
   // ═══════════════════════════════════════════════════════

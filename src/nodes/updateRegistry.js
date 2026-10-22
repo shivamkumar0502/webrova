@@ -107,7 +107,7 @@ export async function updateRegistryNode(state) {
 
   if (!result.ok) {
     console.error(`   [updateRegistry] LLM failed: ${result.error}`);
-    return { error: `updateRegistry failed: ${result.error}`, tokenUsage: emptyTokenDelta("updateRegistry") };
+    return { error: `updateRegistry failed: ${result.error}`, tokenUsage: makeTokenDelta("updateRegistry", result.tokens) };
   }
 
   const registryEntries = result.parsed.files || [];

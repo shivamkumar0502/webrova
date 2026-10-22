@@ -1093,3 +1093,34 @@ body {
   color: var(--text-2);
   flex-shrink: 0;
 }
+/* Build Brief: deliberate scope and budget before the first agent call. */
+.build-brief { background: #171b1a; border: 1px solid #36433d; border-radius: 18px; padding: 26px; box-shadow: 0 24px 80px #0004; }
+.brief-heading { display: flex; justify-content: space-between; align-items: center; gap: 14px; font-size: 11px; letter-spacing: .1em; margin-bottom: 22px; }
+.brief-kicker { color: #a7c9b3; font-size: 10px; letter-spacing: .14em; }
+.brief-tag { border: 1px solid #485c50; border-radius: 30px; padding: 6px 10px; color: #b5d8bf; }
+.build-brief > label { display: block; font-size: 22px; margin-bottom: 16px; color: #f3f5f2; }
+.build-brief textarea { width: 100%; resize: vertical; min-height: 145px; border: 0; outline: 0; background: transparent; color: #e2e9e2; font: inherit; line-height: 1.7; }
+.build-brief textarea:focus-visible { outline: 1px solid #90bda0; outline-offset: 5px; }
+.brief-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 24px; }
+.brief-presets button { border: 1px solid #3b4940; border-radius: 7px; background: #222b25; color: #c9d8cc; padding: 9px 11px; cursor: pointer; font-size: 11px; }
+.brief-presets button span { padding-left: 12px; color: #a4d8b4; }
+.brief-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; padding-top: 18px; border-top: 1px solid #344039; }
+.brief-controls label { display: grid; gap: 8px; font-size: 11px; color: #a3b0a7; }
+.brief-controls select { width: 100%; background: #202923; color: #e4ede6; padding: 10px; border: 1px solid #415047; border-radius: 6px; }
+.brief-review { color: #b8c7bd; font-size: 12px; margin-top: 20px; }
+.brief-review summary { cursor: pointer; }
+.brief-review p { white-space: pre-wrap; line-height: 1.7; margin: 12px 0; }
+.brief-review button { background: transparent; color: #bde5c8; border: 0; cursor: pointer; }
+.brief-footer { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-top: 25px; }
+.brief-footer > span { max-width: 220px; color: #99a89e; font-size: 10px; line-height: 1.5; }
+.workspace-files { background: #171b1a; border: 1px solid #344139; border-radius: 12px; padding: 18px; margin: 22px 0; }
+.file-layout { display: grid; grid-template-columns: 260px minmax(0,1fr); min-height: 260px; }
+.file-layout nav { overflow: auto; max-height: 420px; border-right: 1px solid #344139; padding-right: 12px; }
+.file-layout nav button { display: block; text-align: left; overflow-wrap: anywhere; width: 100%; border: 0; background: transparent; padding: 9px; font: 11px monospace; color: #a5b6aa; cursor: pointer; }
+.file-layout nav button.selected { background: #293a2e; color: #c3f1cf; border-radius: 5px; }
+.file-layout pre { margin: 0; padding: 18px; font: 12px/1.7 monospace; max-height: 380px; overflow: auto; color: #d1ddd5; }
+.file-title { padding: 10px 18px; font: 11px monospace; border-bottom: 1px solid #344139; }
+.access-card { width: min(450px, 90vw); margin: 15vh auto; padding: 32px; background: #171b1a; border: 1px solid #405047; border-radius: 18px; display: grid; gap: 20px; }
+.access-card h1 { font-size: 28px; color: #e9f1eb; }
+.access-card input { background: #202923; color: white; padding: 12px; border: 1px solid #53675b; border-radius: 6px; }
+@media (max-width: 650px) { .build-brief { padding: 18px; } .brief-controls, .file-layout { grid-template-columns: 1fr; } .file-layout nav { max-height: 150px; border-right: 0; } .brief-footer { align-items: start; flex-direction: column; } }
