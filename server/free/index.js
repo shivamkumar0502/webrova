@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateProject } from './generation.js';
+import { normalizeApiKey, hasApiKeyFormat } from '../../shared/apiKey.js';
 
 export function createFreeApp({ generate = generateProject } = {}) {
   const app = express();
@@ -16,7 +17,7 @@ export function createFreeApp({ generate = generateProject } = {}) {
     if (req.path.startsWith('/api')) res.setHeader('Cache-Control', 'no-store');
     next();
   });
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'free-cloud', ai: 'bring-your-own-gemini-key', execution: 'frontend-preview-only', storage: 'browser-export', version: '3.0.0' }));
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'free-cloud', ai: 'bring-your-own-gemini-key', execution: 'frontend-preview-only', storage: 'browser-export', version: '3.0.1' }));
   let active = 0;
   const lastRequest = new Map();
   const sweeper = setInterval(() => { for (const [key, at] of lastRequest) if (Date.now() - at > 60000) lastRequest.delete(key); }, 60000);
@@ -30,8 +31,9 @@ export function createFreeApp({ generate = generateProject } = {}) {
     const requirement = req.body?.requirement;
     if (typeof requirement !== 'string' || requirement.trim().length < 10 || requirement.length > 6000) return res.status(400).json({ error: 'Describe your app in 10–6000 characters.' });
     // BYOK only: no public endpoint can consume the owner's shared paid credentials.
-    const apiKey = req.get('x-gemini-key') || '';
-    if (!/^AIza[A-Za-z0-9_-]{25,100}$/.test(apiKey)) return res.status(401).json({ error: 'Add your Gemini API key in Settings. It is used for this request only.' });
+    const apiKey = normalizeApiKey(req.get('x-gemini-key'));
+    if (!apiKey) return res.status(401).json({ code: 'KEY_MISSING', error: 'Add your Gemini API key in Settings, then click Build my idea again.' });
+    if (!hasApiKeyFormat(apiKey)) return res.status(400).json({ code: 'KEY_FORMAT', error: 'The pasted key contains spaces, line breaks, or an unexpected length. Paste only the API key from Google AI Studio.' });
     const now = Date.now(), address = req.ip;
     if (active >= 2 || now - (lastRequest.get(address) || 0) < 15000) {
       res.setHeader('Retry-After', '15'); return res.status(429).json({ error: 'Please wait 15 seconds before another build.' });

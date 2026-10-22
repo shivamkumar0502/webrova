@@ -93,3 +93,20 @@ test('downloaded sample backend can perform a real SQLite CRUD cycle', async () 
     assert.equal((await (await fetch(base + '/api/tasks')).json()).length, 0);
   } finally { if (child) { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); } await rm(folder, { recursive: true, force: true }); }
 });
+
+test('keys are opaque and copied env assignments/quotes are normalized', async () => {
+  const { normalizeApiKey, hasApiKeyFormat } = await import('../shared/apiKey.js');
+  const opaque = 'AQ.' + 'a'.repeat(80);
+  assert.equal(normalizeApiKey('  GEMINI_API_KEY="' + key + '"  '), key);
+  assert.equal(normalizeApiKey("  '" + key + "'  "), key);
+  assert.ok(hasApiKeyFormat(opaque));
+  assert.equal(hasApiKeyFormat('x'.repeat(20) + '\n' + 'y'.repeat(20)), false);
+  let delivered;
+  const server = createFreeApp({ generate: async options => { delivered = options.apiKey; return demoProject; } }).listen(0, '127.0.0.1');
+  await new Promise(r => server.once('listening', r));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': 'GEMINI_API_KEY="' + opaque + '"' }, body: JSON.stringify({ requirement: 'Build a small task board' }) });
+    assert.equal(response.status, 200);
+    assert.equal(delivered, opaque);
+  } finally { server.closeAllConnections(); await new Promise(r => server.close(r)); }
+});
