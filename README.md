@@ -1,47 +1,47 @@
 # Webrova
 
-An AI code builder for learning and portfolios: describe a small app, generate frontend/backend/database source, inspect and edit files, preview the frontend, and download the full project as a ZIP.
+An AI app-builder portfolio project: turn an idea into frontend, backend and database source, then iterate on it with versioned edits, isolated frontend previews and portable ZIP exports.
 
-## Deploy 
+## Studio
 
-Create a **Node Web Service** from this repository and the branch containing this README.
+- Private email/password accounts and PostgreSQL-backed projects.
+- Owner-managed Gemini credentials; users spend daily demo credits instead of supplying API keys.
+- Transactional user/IP/global quotas, bounded model output and no paid fallback.
+- AI edits to existing source, manual code edits, append-only versions, file comparisons and restore.
+- Build receipts with file changes, source size, model token usage and clearly labelled validation limits.
+- Revocable public links to a specific saved source snapshot, including preview and ZIP download.
 
-- Compute plan: **Free** (do not select a paid plan).
-- Build command: `npm ci --omit=dev && npm run build`
-- Start command: `npm start`
-- Environment: `NODE_ENV=production`, `NODE_VERSION=22.16.0`, `GEMINI_MODEL=gemini-2.5-flash`.
-- Optional HTTP health check: `/api/health`.
-- No attached disk, database, Redis, E2B account or shared owner API key is needed.
-- Render assigns the public `onrender.com` subdomain and HTTPS.
+Read **[WORKSPACE.md](WORKSPACE.md)** for activation, environment variables, security boundaries, demo limits and an interview-ready explanation.
 
-Open Settings in the deployed app and enter **your own Gemini API key**. Use a free-tier Google API project if you want to stay within its free quota; a paid-tier key can incur Google charges. The key stays in page memory, is sent over HTTPS to this server and Google for generation, and is not saved to browser storage, filesystem or server logs. Refreshing clears it. The server intentionally ignores a shared `GEMINI_API_KEY`, so public visitors cannot consume an owner's key. Do not reuse previously committed keys.
+## Deploy
 
-Try **Sample project** without a key. This opens a clearly labelled, deterministic sample task board; it makes no AI request and does not claim to be AI-generated in that session.
+Use a **Node Web Service** on Render with the existing Free compute plan:
 
-## What works
+- Build: `npm ci --omit=dev && npm run build`
+- Start: `npm start`
+- Runtime: Node 22+; `NODE_ENV=production`.
+- Cloud activation: set `DATABASE_URL` and `GEMINI_API_KEY` as server-side environment secrets. Never put them in `VITE_` variables or commit them.
+- Optional health path: `/api/health`.
+- No Docker, E2B, Redis or attached disk is required.
 
-- One bounded Gemini request per generation; no paid model fallback, automatic retries or thinking budget.
-- Frontend HTML/CSS/JS and exported Node/Express/SQLite backend code.
-- An isolated frontend iframe with an opaque origin and network-blocking CSP.
-- Editable source files, refreshable desktop/mobile preview, copy and ZIP export.
-- The current project is saved in your browser's session storage (API keys excluded). Download the ZIP to keep it permanently.
-- Request-size/file-size limits, path validation, at most two active generations per instance, per-IP pacing, timeout/cancellation, and redacted provider errors.
-- The API never executes generated server code, installs generated packages, or creates a database/VM.
+Without the cloud secrets, Studio supports sample/local projects and explicitly shows cloud setup pending. The existing **`/byok`** builder remains available during migration; its page-memory Gemini key is supplied by each user, never saved in browser storage, and never replaced by an owner key.
 
-## What free deployment does not provide
+Use a persistent PostgreSQL database for accounts. Render's free web filesystem is ephemeral, and its free Postgres expires after 30 days. An external persistent PostgreSQL service can be connected through `DATABASE_URL`. No paid resources are provisioned by this repository.
 
-The live **Webrova builder** is cloud-hosted. Its preview runs only frontend scripts using sample/in-memory data. Generated backend and database source is exported but is **not run or runtime-verified by Webrova**. It needs its own suitable runtime/database if you later deploy the generated app. Generated source still needs review and testing.
+## Runtime boundary
 
-Render Free sleeps after inactivity and has cold starts, ephemeral filesystems and shared monthly workspace quotas. Data in server memory/files cannot survive restarts; this app therefore returns generated files directly to the browser rather than storing projects on the server. Browser session storage is not a cloud backup. Free hosting is limited, not unlimited; review Render usage settings and provider quotas. No keep-alive pings or paid resources are provisioned.
+Webrova hosts the builder and **frontend-only** isolated preview. Generated backend/database source is exported, not executed or runtime-verified by Webrova. It requires its own runtime/database when deployed. Preview CSP blocks network access and the iframe has an opaque origin. Generated source still needs review and testing.
 
-The older LangGraph/isolated-runtime implementation remains in source for learning, with its dependencies moved to development-only dependencies. The default `npm start` and dashboard now use the free cloud mode. The archived advanced server is not required for this deployment.
+Local projects are saved in this browser; cloud projects require an account and a connected database. ZIP export is available for backup. Free hosting and AI quotas are limited; a paid-tier Gemini account can incur charges despite request-count caps.
+
+The older LangGraph/isolated-runtime implementation remains in source for learning, with its dependencies excluded from production installs. The default service uses the lightweight Studio/free-cloud server.
 
 ## Development and tests
 
-`npm ci` installs development dependencies for the offline test suite. `npm run build` installs/builds the React dashboard; `npm start` serves it and the API. Node 22+ is required.
+`npm ci`, `npm run build`, then `npm start` (Node 22+).
 
-- `npm run test:free`: request validation, provider behavior, no paid fallback, preview CSP and file/path checks.
-- `npm run test:all:mock`: archived graph/pipeline and platform tests with mocked external calls.
-- `npm run build`: production frontend bundle.
+- `npm run test:workspace`: embedded PostgreSQL/HTTP integration tests for accounts, quotas, ownership, edits, versions and sharing.
+- `npm run test:free`: bounded generation, file/path validation, preview isolation and exported sample backend checks.
+- `npm run test:platform`, `npm run test:graph`, `npm run test:validator`: archived platform and mock pipeline checks.
 
-Production deployments only need the three root runtime dependencies (Express, dotenv and Google GenAI); heavy LangGraph/E2B dependencies are excluded by `--omit=dev`. Frontend build tooling is installed only during the build.
+Tests never require a real Gemini key. Workspace tests use test-only model responses; live Google generation is a separate check after configuring the owner's key.
