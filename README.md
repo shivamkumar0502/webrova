@@ -4,7 +4,7 @@ An AI app-builder portfolio project: turn an idea into frontend, backend and dat
 
 ## Studio
 
-- Private email/password accounts and PostgreSQL-backed projects.
+- Private email/password accounts and MongoDB-backed projects.
 - Owner-managed Gemini credentials; users spend daily demo credits instead of supplying API keys.
 - Transactional user/IP/global quotas, bounded model output and no paid fallback.
 - AI edits to existing source, manual code edits, append-only versions, file comparisons and restore.
@@ -20,13 +20,13 @@ Use a **Node Web Service** on Render with the existing Free compute plan:
 - Build: `npm ci --omit=dev && npm run build`
 - Start: `npm start`
 - Runtime: Node 22+; `NODE_ENV=production`.
-- Cloud activation: set `DATABASE_URL` and `GEMINI_API_KEY` as server-side environment secrets. Never put them in `VITE_` variables or commit them.
+- Cloud activation: set `MONGODB_URI` and `GEMINI_API_KEY` as server-side environment secrets. Never put them in `VITE_` variables or commit them.
 - Optional health path: `/api/health`.
 - No Docker, E2B, Redis or attached disk is required.
 
 Without the cloud secrets, Studio supports sample/local projects and explicitly shows cloud setup pending. The existing **`/byok`** builder remains available during migration; its page-memory Gemini key is supplied by each user, never saved in browser storage, and never replaced by an owner key.
 
-Use a persistent PostgreSQL database for accounts. Render's free web filesystem is ephemeral, and its free Postgres expires after 30 days. An external persistent PostgreSQL service can be connected through `DATABASE_URL`. No paid resources are provisioned by this repository.
+Use MongoDB Atlas for cloud accounts. Set `MONGODB_DB=webrova` (the default) to select the database. The deployment must support MongoDB transactions; a standalone mongod is refused. No paid resources are provisioned by this repository.
 
 ## Runtime boundary
 
@@ -40,7 +40,7 @@ The older LangGraph/isolated-runtime implementation remains in source for learni
 
 `npm ci`, `npm run build`, then `npm start` (Node 22+).
 
-- `npm run test:workspace`: embedded PostgreSQL/HTTP integration tests for accounts, quotas, ownership, edits, versions and sharing.
+- `npm run test:workspace`: real MongoDB replica-set/HTTP integration tests for accounts, quotas, ownership, edits, versions and sharing.
 - `npm run test:free`: bounded generation, file/path validation, preview isolation and exported sample backend checks.
 - `npm run test:platform`, `npm run test:graph`, `npm run test:validator`: archived platform and mock pipeline checks.
 

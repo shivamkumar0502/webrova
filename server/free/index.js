@@ -20,7 +20,7 @@ export function createFreeApp({ generate = generateProject, store = null, ownerK
     next();
   });
   app.use('/api/workspace', workspaceRouter({ store, ownerKey, generate, secure, limits, model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' }));
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'free-cloud', ai: 'bring-your-own-gemini-key', execution: 'frontend-preview-only', storage: 'browser-export', version: '4.0.0', workspace: !!store }));
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'free-cloud', ai: store && ownerKey ? 'server-managed-gemini' : 'bring-your-own-gemini-key', execution: 'frontend-preview-only', storage: store ? 'mongodb-workspace' : 'browser-export', version: '4.1.0', workspace: !!store }));
   let active = 0;
   const lastRequest = new Map();
   const sweeper = setInterval(() => { for (const [key, at] of lastRequest) if (Date.now() - at > 60000) lastRequest.delete(key); }, 60000);
@@ -69,10 +69,10 @@ export function createFreeApp({ generate = generateProject, store = null, ownerK
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let store = null;
-  if (process.env.DATABASE_URL) {
-    try { store = await connectStore(process.env.DATABASE_URL); }
+  if (process.env.MONGODB_URI) {
+    try { store = await connectStore(process.env.MONGODB_URI); }
     catch { console.error('Workspace database unavailable; refusing to start with temporary account storage.'); process.exit(1); }
   }
   const server = createFreeApp({ store, secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, limits: { user: process.env.DAILY_USER_BUILDS, global: process.env.DAILY_GLOBAL_BUILDS, ip: process.env.DAILY_IP_BUILDS } }).listen(process.env.PORT || 3000, '0.0.0.0', () => console.log('Webrova free cloud ready'));
-  process.on('SIGTERM', () => { server.close(); setTimeout(() => process.exit(0), 10000).unref(); });
+  process.on('SIGTERM', () => { server.close(() => { store?.close().catch(() => {}); }); setTimeout(() => process.exit(0), 10000).unref(); });
 }
