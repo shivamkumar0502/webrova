@@ -1,3 +1,5 @@
+> **Webrova Studio update:** private accounts, server-managed AI credits, existing-project edits, version comparison/restore, build receipts and revocable source sharing. Read [WORKSPACE.md](WORKSPACE.md) for activation and exact limitations. The original key-based builder remains at `/byok` while the owner configures PostgreSQL and Gemini secrets.
+
 # Webrova — Free Cloud Edition
 
 An AI code builder for learning and portfolios: describe a small app, generate frontend/backend/database source, inspect and edit files, preview the frontend, and download the full project as a ZIP.

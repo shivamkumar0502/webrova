@@ -2,14 +2,16 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workspaceRouter } from '../workspace/routes.js';
+import { connectStore } from '../workspace/store.js';
 import { generateProject } from './generation.js';
 import { normalizeApiKey, hasApiKeyFormat } from '../../shared/apiKey.js';
 
-export function createFreeApp({ generate = generateProject } = {}) {
+export function createFreeApp({ generate = generateProject, store = null, ownerKey = process.env.GEMINI_API_KEY || '', secure = process.env.NODE_ENV === 'production', limits = {} } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '24kb' }));
+  app.use(express.json({ limit: '400kb' }));
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -17,7 +19,8 @@ export function createFreeApp({ generate = generateProject } = {}) {
     if (req.path.startsWith('/api')) res.setHeader('Cache-Control', 'no-store');
     next();
   });
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'free-cloud', ai: 'bring-your-own-gemini-key', execution: 'frontend-preview-only', storage: 'browser-export', version: '3.0.1' }));
+  app.use('/api/workspace', workspaceRouter({ store, ownerKey, generate, secure, limits, model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' }));
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'free-cloud', ai: 'bring-your-own-gemini-key', execution: 'frontend-preview-only', storage: 'browser-export', version: '4.0.0', workspace: !!store }));
   let active = 0;
   const lastRequest = new Map();
   const sweeper = setInterval(() => { for (const [key, at] of lastRequest) if (Date.now() - at > 60000) lastRequest.delete(key); }, 60000);
@@ -65,6 +68,11 @@ export function createFreeApp({ generate = generateProject } = {}) {
   return app;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const server = createFreeApp().listen(process.env.PORT || 3000, '0.0.0.0', () => console.log('Webrova free cloud ready'));
+  let store = null;
+  if (process.env.DATABASE_URL) {
+    try { store = await connectStore(process.env.DATABASE_URL); }
+    catch { console.error('Workspace database unavailable; refusing to start with temporary account storage.'); process.exit(1); }
+  }
+  const server = createFreeApp({ store, secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, limits: { user: process.env.DAILY_USER_BUILDS, global: process.env.DAILY_GLOBAL_BUILDS, ip: process.env.DAILY_IP_BUILDS } }).listen(process.env.PORT || 3000, '0.0.0.0', () => console.log('Webrova free cloud ready'));
   process.on('SIGTERM', () => { server.close(); setTimeout(() => process.exit(0), 10000).unref(); });
 }
