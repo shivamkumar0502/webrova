@@ -1,7 +1,7 @@
 import express from 'express';
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { fail, digest } from './store.js';
+import { fail } from './store.js';
 import { validateProject, generateProject } from '../free/generation.js';
 import { buildReport } from '../../shared/buildReport.js';
 const derive = promisify(scrypt);
@@ -14,9 +14,9 @@ export function workspaceRouter({ store, ownerKey = '', model = 'gemini-2.5-flas
   const caps={user:bounded(limits.user,3,20),global:bounded(limits.global,20,200),ip:bounded(limits.ip,6,30)};
   const route=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next);
   const protect=(req,res,next)=>{ Promise.resolve(store.user(sessionToken(req))).then(user=>{if(!user)throw fail(401,'Sign in to use your cloud workspace.');req.user=user;next();}).catch(next); };
-  router.get('/config', (_req,res)=>res.json({accounts:!!store, aiReady:!!store&&!!ownerKey, creditsPerDay:caps.user, globalBuildsPerDay:caps.global, storage:store?'postgres':'not-configured', version:'4.0.0'}));
+  router.get('/config', (_req,res)=>res.json({accounts:!!store, aiReady:!!store&&!!ownerKey, creditsPerDay:caps.user, globalBuildsPerDay:caps.global, storage:store?'mongodb':'not-configured', version:'4.1.0'}));
   router.use((req,res,next)=>{
-    if(!store)return res.status(503).json({error:'Cloud workspace needs DATABASE_URL in the server environment. Sample projects and local history still work.'});
+    if(!store)return res.status(503).json({error:'Cloud workspace needs MONGODB_URI in the server environment. Sample projects and local history still work.'});
     if(!['GET','HEAD'].includes(req.method)) {
       const origin=req.get('origin');
       if(origin) { try { if(new URL(origin).host!==req.get('host'))throw Error(); } catch { return res.status(403).json({error:'Use this app from its own website.'}); } }
@@ -35,11 +35,11 @@ export function workspaceRouter({ store, ownerKey = '', model = 'gemini-2.5-flas
   for(const action of ['register','login']) router.post('/auth/'+action,guardAuth,route(async(req,res)=>{
     const {email:raw,password}=req.body||{}; const email=typeof raw==='string'?raw.trim().toLowerCase():'';
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||typeof password!=='string'||password.length<10||password.length>128)throw fail(400,'Use a valid email and a password of 10–128 characters.');
-    await store.db.transaction(q=>store.consume(q,'auth:'+digest(req.ip),60,Date.now()));
+    await store.authAttempt(req.ip);
     let user;
     if(action==='register'){
       try { user=await store.createUser(email,await hashPassword(password),req.ip); }
-      catch(e){ if(e.code==='23505')throw fail(409,'Account cannot be created. Try signing in.'); throw e; }
+      catch(e){ if(e.code===11000)throw fail(409,'Account cannot be created. Try signing in.'); throw e; }
     } else {
       const found=await store.userByEmail(email);
       // Always run scrypt, even for unknown users.

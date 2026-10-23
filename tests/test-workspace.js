@@ -1,16 +1,17 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { PGlite } from '@electric-sql/pglite';
-import { WorkspaceStore, schema } from '../server/workspace/store.js';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { connectStore, digest } from '../server/workspace/store.js';
 import { createFreeApp } from '../server/free/index.js';
 import { demoProject } from '../dashboard/src/free/demoProject.js';
 import { generateProject } from '../server/free/generation.js';
 import { compareFiles } from '../shared/buildReport.js';
+let replica;
 async function database() {
-  const pg=new PGlite();await pg.exec(schema);
-  const db={query:(s,p)=>pg.query(s,p),transaction:fn=>pg.transaction(q=>fn(q)),close:()=>pg.close()};
-  return new WorkspaceStore(db);
+  replica ||= await MongoMemoryReplSet.create({ replSet: { count: 1, args: ['--nounixsocket', '--setParameter', 'diagnosticDataCollectionEnabled=false'] }, binary: { version: '7.0.24' } });
+  return connectStore(replica.getUri(), { dbName: 'test_' + crypto.randomUUID().replaceAll('-', '') });
 }
+after(async () => { if (replica) await replica.stop(); });
 test('atomic daily reservations prevent overuse and roll back all counters',async()=>{
   const store=await database();
   try{
@@ -20,10 +21,13 @@ test('atomic daily reservations prevent overuse and roll back all counters',asyn
     assert.equal((await store.credits('alice',limits)).remaining,0);
     assert.equal((await store.credits('alice',limits)).globalRemaining,1,'rejected reservation rolls back global counter');
     await store.reserve('bob','two',limits);
+    const restarted=await connectStore(replica.getUri(),{dbName:store.db.databaseName});
+    assert.equal((await restarted.credits('alice',limits)).remaining,0,'quota survives a new application connection');
+    await restarted.close();
     await assert.rejects(store.reserve('charlie','three',limits),/Daily demo limit/);
     const tomorrow=Date.now()+86400000;
     await store.reserve('alice','one',limits,tomorrow);
-  }finally{await store.db.close();}
+  }finally{await store.close();}
 });
 test('cloud workflow enforces auth, ownership, versions, public snapshot boundaries and revocation',async()=>{
   const store=await database();let delivered=[];
@@ -36,6 +40,12 @@ test('cloud workflow enforces auth, ownership, versions, public snapshot boundar
     const alice=await request('/auth/register',{email:'alice@example.test',password:'Unique-password-123'});
     assert.equal(alice.status,200);assert.match(alice.cookie,/HttpOnly/);assert.match(alice.cookie,/SameSite=Strict/);
     const a=alice.cookie.split(';')[0];
+    const token=a.split('=')[1];
+    assert.ok(await store.sessions.findOne({_id:digest(token)}));
+    assert.equal(await store.sessions.findOne({_id:token}),null,'raw session credentials are not stored');
+    const secondConnection=await connectStore(replica.getUri(),{dbName:store.db.databaseName});
+    assert.equal((await secondConnection.user(token)).email,'alice@example.test','session survives reconnect');
+    await secondConnection.close();
     const bob=await request('/auth/register',{email:'bob@example.test',password:'Unique-password-456'});const b=bob.cookie.split(';')[0];
     assert.equal((await request('/auth/login',{email:'alice@example.test',password:'Wrong-password'})).status,401);
     const first=await request('/build',{requirement:'Build a useful task board'},a);assert.equal(first.status,200);const p=first.body.project;
@@ -55,7 +65,7 @@ test('cloud workflow enforces auth, ownership, versions, public snapshot boundar
     assert.equal((await request('/shares/'+share.body.token)).status,404);
     const csrf=await fetch(base+'/auth/logout',{method:'POST',headers:{'Content-Type':'application/json',Cookie:a,Origin:'https://evil.example'},body:'{}'});assert.equal(csrf.status,403);
     assert.equal((await request('/auth/logout',{},a)).status,200);assert.equal((await request('/auth/me',undefined,a)).status,401);
-  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await store.db.close();}
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await store.close();}
 });
 test('AI edit sends complete prior source and change within one bounded call',async()=>{
   let calls=0;
@@ -67,4 +77,35 @@ test('AI edit sends complete prior source and change within one bounded call',as
 test('missing database fails closed rather than creating temporary accounts',async()=>{
  const server=createFreeApp({ownerKey:'server-secret'}).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
  try{const base=`http://127.0.0.1:${server.address().port}/api/workspace`;const config=await(await fetch(base+'/config')).json();assert.equal(config.accounts,false);assert.equal(config.aiReady,false);assert.equal((await fetch(base+'/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'x@y.test',password:'Something-unique'})})).status,503);}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+
+test('parallel MongoDB reservations respect the global cap without overspending', async()=>{
+  const store=await database();const limits={global:5,user:2,ip:2};
+  try {
+    const outcomes=await Promise.allSettled(Array.from({length:10},(_,i)=>store.reserve('parallel-'+i,'ip-'+i,limits)));
+    assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,5);
+    assert.equal(outcomes.filter(r=>r.status==='rejected').every(r=>r.reason.status===429),true);
+    assert.equal((await store.credits('unused-user',limits)).globalRemaining,0);
+    const rows=await store.quotas.find({_id:/build:user:parallel-/}).toArray();
+    assert.equal(rows.reduce((sum,r)=>sum+r.used,0),5,'failed reservations do not spend user counters');
+  } finally {await store.close();}
+});
+test('MongoDB optimistic writes preserve versions and enforce session expiry', async()=>{
+  const store=await database();
+  try {
+    const user=await store.createUser('versions@example.test','test-only-hash','versions-ip');
+    const first=await store.save(user.id,null,0,demoProject,'Initial snapshot');
+    const outcomes=await Promise.allSettled([
+      store.save(user.id,first.id,1,{...demoProject,title:'First tab'},'First tab edit'),
+      store.save(user.id,first.id,1,{...demoProject,title:'Second tab'},'Second tab edit')
+    ]);
+    assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(outcomes.find(r=>r.status==='rejected').reason.status,409);
+    assert.equal((await store.versions(user.id,first.id)).length,2);
+    assert.equal((await store.version(user.id,first.id,1)).title,demoProject.title);
+    await assert.rejects(store.project(user.id,{$ne:null}),/Project not found/);
+    const token=await store.session(user.id);
+    await store.sessions.updateOne({_id:digest(token)},{$set:{expires:new Date(Date.now()-1000)}});
+    assert.equal(await store.user(token),null,'expired session rejected before TTL cleanup');
+  } finally {await store.close();}
 });

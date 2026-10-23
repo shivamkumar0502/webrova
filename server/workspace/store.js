@@ -1,112 +1,173 @@
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
-import pg from 'pg';
+import { MongoClient } from 'mongodb';
 export const fail = (status, message) => Object.assign(new Error(message), { status });
 export const digest = value => createHash('sha256').update(value).digest('hex');
-export const schema = `
-CREATE TABLE IF NOT EXISTS wr_users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, password TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS wr_sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES wr_users(id) ON DELETE CASCADE, expires BIGINT NOT NULL);
-CREATE TABLE IF NOT EXISTS wr_quotas (scope TEXT NOT NULL, day TEXT NOT NULL, used INTEGER NOT NULL, PRIMARY KEY(scope,day));
-CREATE TABLE IF NOT EXISTS wr_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES wr_users(id) ON DELETE CASCADE, title TEXT NOT NULL, head INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS wr_owner_idx ON wr_projects(user_id);
-CREATE TABLE IF NOT EXISTS wr_versions (project_id TEXT NOT NULL REFERENCES wr_projects(id) ON DELETE CASCADE, number INTEGER NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, snapshot TEXT NOT NULL, PRIMARY KEY(project_id,number));
-CREATE TABLE IF NOT EXISTS wr_shares (token TEXT PRIMARY KEY, project_id TEXT UNIQUE NOT NULL REFERENCES wr_projects(id) ON DELETE CASCADE, snapshot TEXT NOT NULL);
-`;
-export async function connectStore(url) {
-  const parsed = new URL(url);
-  const sslMode = parsed.searchParams.get('sslmode');
-  const tls = ['require','verify-ca','verify-full'].includes(sslMode);
-  if (tls) { parsed.searchParams.delete('sslmode'); parsed.searchParams.delete('uselibpqcompat'); }
-  const pool = new pg.Pool({ connectionString: parsed.toString(), ...(tls ? { ssl: { rejectUnauthorized: true } } : {}), max: 4, connectionTimeoutMillis: 10000, statement_timeout: 15000 });
-  // Never disable certificate verification. Honor the provider's connection URL.
-  pool.on('error', () => console.error('Workspace database connection interrupted'));
-  const db = { query: (s, p) => pool.query(s, p), transaction: async fn => {
-    const c = await pool.connect();
-    try { await c.query('BEGIN'); const result = await fn(c); await c.query('COMMIT'); return result; }
-    catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
-  }, close: () => pool.end() };
-  await db.query(schema);
-  return new WorkspaceStore(db);
+const publicUser = user => user ? { id: user._id, email: user.email } : null;
+export async function connectStore(uri, { dbName = process.env.MONGODB_DB || 'webrova' } = {}) {
+  if (typeof uri !== 'string' || !/^mongodb(?:\+srv)?:\/\//.test(uri)) throw new Error('MONGODB_URI must be a MongoDB connection string');
+  const client = new MongoClient(uri, { maxPoolSize: 5, minPoolSize: 0, serverSelectionTimeoutMS: 10000, connectTimeoutMS: 10000, socketTimeoutMS: 20000 });
+  try {
+    await client.connect();
+    const hello = await client.db('admin').command({ hello: 1 });
+    if (!hello.setName && hello.msg !== 'isdbgrid') throw new Error('Workspace requires a transaction-capable MongoDB replica set, such as Atlas');
+    const store = new WorkspaceStore(client, client.db(dbName));
+    await store.initialize();
+    return store;
+  } catch (e) { await client.close(); throw e; }
 }
 export class WorkspaceStore {
-  constructor(db) { this.db = db; }
-  async userByEmail(email) { return (await this.db.query('SELECT * FROM wr_users WHERE email=$1', [email])).rows[0]; }
+  constructor(client, db) {
+    this.client = client;
+    this.db = db;
+    this.users = db.collection('wr_users');
+    this.sessions = db.collection('wr_sessions');
+    this.quotas = db.collection('wr_quotas');
+    this.projects = db.collection('wr_projects');
+    this.history = db.collection('wr_versions');
+    this.shares = db.collection('wr_shares');
+  }
+  async initialize() {
+    await this.users.createIndex({ email: 1 }, { unique: true });
+    await this.sessions.createIndex({ expires: 1 }, { expireAfterSeconds: 0 });
+    await this.quotas.createIndex({ expires: 1 }, { expireAfterSeconds: 0 });
+    await this.projects.createIndex({ userId: 1, updated_at: -1 });
+    await this.history.createIndex({ projectId: 1, number: 1 }, { unique: true });
+    await this.shares.createIndex({ projectId: 1 }, { unique: true });
+  }
+  async close() { await this.client.close(); }
+  async transaction(fn) {
+    const session = this.client.startSession();
+    try { return await session.withTransaction(() => fn(session), { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, readPreference: 'primary', maxCommitTimeMS: 10000 }); }
+    finally { await session.endSession(); }
+  }
+  async userByEmail(email) {
+    const user = await this.users.findOne({ email });
+    return user ? { ...publicUser(user), password: user.password } : null;
+  }
   async createUser(email, password, ip, now = Date.now()) {
-    return this.db.transaction(async q => {
-      await this.consume(q, 'signup:'+digest(ip), 3, now);
-      await this.consume(q, 'signup:global', 30, now);
-      const user = { id: randomUUID(), email };
-      await q.query('INSERT INTO wr_users(id,email,password) VALUES($1,$2,$3)', [user.id, email, password]);
-      return user;
+    await this.ensureCounters(['signup:global', 'signup:' + digest(ip)], now);
+    return this.transaction(async session => {
+      await this.consume(session, 'signup:global', 30, now);
+      await this.consume(session, 'signup:' + digest(ip), 3, now);
+      const user = { _id: randomUUID(), email, password, projectCount: 0 };
+      await this.users.insertOne(user, { session });
+      return publicUser(user);
     });
   }
   async session(userId) {
     const token = randomBytes(32).toString('base64url');
-    await this.db.query('DELETE FROM wr_sessions WHERE expires<$1', [Date.now()]);
-    await this.db.query('INSERT INTO wr_sessions(token,user_id,expires) VALUES($1,$2,$3)', [digest(token), userId, Date.now()+7*86400000]);
+    await this.sessions.insertOne({ _id: digest(token), userId, expires: new Date(Date.now() + 7 * 86400000) });
     return token;
   }
-  async user(token) { if (!token) return null; return (await this.db.query('SELECT u.id,u.email FROM wr_sessions s JOIN wr_users u ON s.user_id=u.id WHERE s.token=$1 AND s.expires>$2', [digest(token), Date.now()])).rows[0] || null; }
-  async logout(token) { if (token) await this.db.query('DELETE FROM wr_sessions WHERE token=$1', [digest(token)]); }
-  async consume(q, scope, limit, now) {
-    const day = new Date(now).toISOString().slice(0,10);
-    const r = await q.query('INSERT INTO wr_quotas(scope,day,used) VALUES($1,$2,1) ON CONFLICT(scope,day) DO UPDATE SET used=wr_quotas.used+1 WHERE wr_quotas.used<$3 RETURNING used', [scope, day, limit]);
-    if (!r.rows.length || limit < 1) throw fail(429, 'Daily demo limit reached. Credits reset at 00:00 UTC.');
+  async user(token) {
+    if (!token) return null;
+    // Explicit expiry check: TTL cleanup is asynchronous.
+    const row = await this.sessions.findOne({ _id: digest(token), expires: { $gt: new Date() } });
+    return row ? publicUser(await this.users.findOne({ _id: row.userId })) : null;
   }
-  async reserve(userId, ip, limits, now=Date.now()) {
-    return this.db.transaction(async q => {
-      // All reservations lock the global row first, then user/IP; overspending rolls back atomically.
-      await this.consume(q, 'build:global', limits.global, now);
-      await this.consume(q, 'build:user:'+userId, limits.user, now);
-      await this.consume(q, 'build:ip:'+digest(ip), limits.ip, now);
+  async logout(token) { if (token) await this.sessions.deleteOne({ _id: digest(token) }); }
+  async ensureCounters(scopes, now) {
+    const day = new Date(now).toISOString().slice(0, 10);
+    for (const scope of scopes) {
+      try { await this.quotas.updateOne({ _id: day + ':' + scope }, { $setOnInsert: { used: 0, expires: new Date(Date.parse(day) + 3 * 86400000) } }, { upsert: true }); }
+      catch (e) { if (e.code !== 11000) throw e; }
+    }
+  }
+  async consume(session, scope, limit, now) {
+    if (!Number.isInteger(limit) || limit < 1) throw fail(429, 'Daily demo limit reached. Credits reset at 00:00 UTC.');
+    const day = new Date(now).toISOString().slice(0, 10);
+    const updated = await this.quotas.updateOne({ _id: day + ':' + scope, used: { $lt: limit } }, { $inc: { used: 1 } }, { session });
+    if (!updated.matchedCount) throw fail(429, 'Daily demo limit reached. Credits reset at 00:00 UTC.');
+  }
+  async authAttempt(ip) {
+    const now = Date.now(), scope = 'auth:' + digest(ip);
+    await this.ensureCounters([scope], now);
+    return this.transaction(session => this.consume(session, scope, 60, now));
+  }
+  async reserve(userId, ip, limits, now = Date.now()) {
+    const scopes = ['build:global', 'build:user:' + userId, 'build:ip:' + digest(ip)];
+    // Initial zero counters are idempotent; only the bounded transaction spends credits.
+    await this.ensureCounters(scopes, now);
+    return this.transaction(async session => {
+      await this.consume(session, scopes[0], limits.global, now);
+      await this.consume(session, scopes[1], limits.user, now);
+      await this.consume(session, scopes[2], limits.ip, now);
     });
   }
   async credits(userId, limits) {
-    const rows = (await this.db.query('SELECT scope,used FROM wr_quotas WHERE day=$1 AND (scope=$2 OR scope=$3)', [new Date().toISOString().slice(0,10), 'build:user:'+userId, 'build:global'])).rows;
-    const used = scope => Number(rows.find(r=>r.scope===scope)?.used || 0);
-    return { remaining: Math.max(0,limits.user-used('build:user:'+userId)), limit: limits.user, globalRemaining: Math.max(0,limits.global-used('build:global')), resetAt: new Date(new Date().setUTCHours(24,0,0,0)).toISOString() };
+    const day = new Date().toISOString().slice(0, 10);
+    const userKey = day + ':build:user:' + userId, globalKey = day + ':build:global';
+    const rows = await this.quotas.find({ _id: { $in: [userKey, globalKey] } }).toArray();
+    const used = id => rows.find(row => row._id === id)?.used || 0;
+    return { remaining: Math.max(0, limits.user - used(userKey)), limit: limits.user, globalRemaining: Math.max(0, limits.global - used(globalKey)), resetAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString() };
   }
-  async list(userId) { return (await this.db.query('SELECT id,title,head,updated_at FROM wr_projects WHERE user_id=$1 ORDER BY updated_at DESC', [userId])).rows; }
-  async owned(q, userId, id, lock=false) {
-    const row = (await q.query('SELECT * FROM wr_projects WHERE id=$1 AND user_id=$2'+(lock?' FOR UPDATE':''), [id,userId])).rows[0];
-    if (!row) throw fail(404,'Project not found.'); return row;
+  async list(userId) {
+    const rows = await this.projects.find({ userId }, { projection: { title: 1, head: 1, updated_at: 1 } }).sort({ updated_at: -1 }).toArray();
+    return rows.map(({ _id, ...row }) => ({ ...row, id: _id }));
+  }
+  async owned(userId, id, session) {
+    if (typeof id !== 'string') throw fail(404, 'Project not found.');
+    const row = await this.projects.findOne({ _id: id, userId }, { session });
+    if (!row) throw fail(404, 'Project not found.');
+    return row;
   }
   async project(userId, id) {
-    const row = await this.owned(this.db,userId,id);
-    const v = (await this.db.query('SELECT snapshot FROM wr_versions WHERE project_id=$1 AND number=$2',[id,row.head])).rows[0];
-    return { ...JSON.parse(v.snapshot), id, head: row.head, cloud: true };
+    const row = await this.owned(userId, id);
+    const version = await this.history.findOne({ projectId: id, number: row.head });
+    if (!version) throw fail(503, 'Project version is unavailable.');
+    return { ...version.snapshot, id, head: row.head, cloud: true };
   }
-  async versions(userId, id) { await this.owned(this.db,userId,id); return (await this.db.query('SELECT number,label,created_at FROM wr_versions WHERE project_id=$1 ORDER BY number DESC',[id])).rows; }
-  async version(userId,id,number) { await this.owned(this.db,userId,id); const r=(await this.db.query('SELECT snapshot FROM wr_versions WHERE project_id=$1 AND number=$2',[id,number])).rows[0]; if(!r)throw fail(404,'Version not found.'); return JSON.parse(r.snapshot); }
+  async versions(userId, id) {
+    await this.owned(userId, id);
+    return this.history.find({ projectId: id }, { projection: { _id: 0, number: 1, label: 1, created_at: 1 } }).sort({ number: -1 }).toArray();
+  }
+  async version(userId, id, number) {
+    await this.owned(userId, id);
+    const row = await this.history.findOne({ projectId: id, number });
+    if (!row) throw fail(404, 'Version not found.');
+    return row.snapshot;
+  }
   async save(userId, id, expectedHead, snapshot, label) {
-    return this.db.transaction(async q => {
+    // Stable ID across transaction retries. The callback has no external side effects.
+    const newId = id || randomUUID();
+    return this.transaction(async session => {
       let row;
-      if (id) row = await this.owned(q,userId,id,true);
+      if (id) row = await this.owned(userId, id, session);
       else {
-        // Serialize project creation per user and bound retained data.
-        await q.query('SELECT id FROM wr_users WHERE id=$1 FOR UPDATE',[userId]);
-        if ((await q.query('SELECT id FROM wr_projects WHERE user_id=$1',[userId])).rows.length>=20) throw fail(409,'Demo workspace holds up to 20 projects.');
-        id=randomUUID(); row={head:0};
-        await q.query('INSERT INTO wr_projects(id,user_id,title,head,updated_at) VALUES($1,$2,$3,0,$4)',[id,userId,snapshot.title,new Date().toISOString()]);
+        const owner = await this.users.updateOne({ _id: userId, projectCount: { $lt: 20 } }, { $inc: { projectCount: 1 } }, { session });
+        if (!owner.matchedCount) throw fail(409, 'Demo workspace holds up to 20 projects.');
+        row = { head: 0 };
       }
-      if (row.head !== expectedHead) throw fail(409,'Project changed in another tab. Reopen it before saving.');
-      if (row.head>=30) throw fail(409,'This demo keeps up to 30 versions per project. Download a ZIP to continue separately.');
-      const head=row.head+1, at=new Date().toISOString();
-      await q.query('INSERT INTO wr_versions(project_id,number,label,created_at,snapshot) VALUES($1,$2,$3,$4,$5)',[id,head,label.slice(0,180),at,JSON.stringify(snapshot)]);
-      await q.query('UPDATE wr_projects SET title=$1,head=$2,updated_at=$3 WHERE id=$4',[snapshot.title,head,at,id]);
-      return {...snapshot,id,head,cloud:true};
+      if (row.head !== expectedHead) throw fail(409, 'Project changed in another tab. Reopen it before saving.');
+      if (row.head >= 30) throw fail(409, 'This demo keeps up to 30 versions per project. Download a ZIP to continue separately.');
+      const head = row.head + 1, at = new Date().toISOString();
+      if (id) {
+        const updated = await this.projects.updateOne({ _id: id, userId, head: expectedHead }, { $set: { title: snapshot.title, head, updated_at: at } }, { session });
+        if (!updated.matchedCount) throw fail(409, 'Project changed in another tab. Reopen it before saving.');
+      } else await this.projects.insertOne({ _id: newId, userId, title: snapshot.title, head, updated_at: at }, { session });
+      await this.history.insertOne({ projectId: newId, number: head, label: label.slice(0, 180), created_at: at, snapshot }, { session });
+      return { ...snapshot, id: newId, head, cloud: true };
     });
   }
-  async share(userId,id,expectedHead) {
-    return this.db.transaction(async q=>{
-      const row=await this.owned(q,userId,id,true);
-      if(row.head!==expectedHead)throw fail(409,'Save and reopen the current version before sharing.');
-      const v=(await q.query('SELECT snapshot FROM wr_versions WHERE project_id=$1 AND number=$2',[id,row.head])).rows[0];
-      await q.query('DELETE FROM wr_shares WHERE project_id=$1',[id]);
-      const token=randomBytes(24).toString('base64url');
-      await q.query('INSERT INTO wr_shares(token,project_id,snapshot) VALUES($1,$2,$3)',[token,id,v.snapshot]);
+  async share(userId, id, expectedHead) {
+    const token = randomBytes(24).toString('base64url');
+    return this.transaction(async session => {
+      const row = await this.owned(userId, id, session);
+      if (row.head !== expectedHead) throw fail(409, 'Save and reopen the current version before sharing.');
+      const version = await this.history.findOne({ projectId: id, number: row.head }, { session });
+      await this.shares.deleteOne({ projectId: id }, { session });
+      await this.shares.insertOne({ _id: token, projectId: id, snapshot: version.snapshot }, { session });
       return token;
     });
   }
-  async unshare(userId,id) { await this.owned(this.db,userId,id); await this.db.query('DELETE FROM wr_shares WHERE project_id=$1',[id]); }
-  async shared(token) { const r=(await this.db.query('SELECT snapshot FROM wr_shares WHERE token=$1',[token])).rows[0]; if(!r)throw fail(404,'Share link is unavailable or has been revoked.'); const p=JSON.parse(r.snapshot); return {title:p.title,summary:p.summary,files:p.files,report:p.report,generatedAt:p.generatedAt}; }
+  async unshare(userId, id) {
+    await this.owned(userId, id);
+    await this.shares.deleteOne({ projectId: id });
+  }
+  async shared(token) {
+    const row = await this.shares.findOne({ _id: token });
+    if (!row) throw fail(404, 'Share link is unavailable or has been revoked.');
+    const p = row.snapshot;
+    return { title: p.title, summary: p.summary, files: p.files, report: p.report, generatedAt: p.generatedAt };
+  }
 }
